@@ -1,0 +1,244 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml">
+	<head>
+		<meta charset="UTF-8" />
+		<title>発着駅別駅間通過人員図</title>
+	</head>
+	<body>
+		<h1>発着駅別駅間通過人員図</h1>
+		<td>ファイルを読み込み：<input type="file" id="input_file" accept="text/csv" /></td>
+		<div id="div1"></div>
+		<script>
+			//<![CDATA[
+
+const busmapjs = {};
+
+//Fileオブジェクトをtextに変換
+//Promiseを使用しているため、使用時はasync/awaitをつける
+busmapjs.convert_file_to_text = function (a_file) {
+	const c_text = new Promise(f_promise);
+	function f_promise(a_resolve, a_reject) {
+		const c_reader = new FileReader();
+		c_reader.addEventListener("load", f_load, false);
+		function f_load() {
+			a_resolve(c_reader.result);
+		}
+		c_reader.readAsText(a_file);
+	}
+	return c_text;
+}
+
+
+
+document.getElementById("input_file").onchange = f_main;
+async function f_main(a) {
+	const c_text = await busmapjs.convert_file_to_text(a.target.files[0]);
+	const c_data = f_convert_csv_to_json_2(c_text);
+	
+	const c_od = [];
+	for (let i1 = 1; i1 < c_data.length; i1++) {
+		const c_row = [];
+		for (let i2 = 1; i2 < c_data[i1].length; i2++) {
+			c_row.push(Number(c_data[i1][i2]));
+		}
+		c_od.push(c_row);
+	}
+	
+	// 発着駅別駅間通過人員
+	const c_pass = [];
+	for (let i1 = 0; i1 < c_od.length; i1++) { // 発着駅i1
+		c_pass.push([]);
+		for (let i2 = 0; i2 < c_od.length + 1; i2++) { // i2-1～i2駅間、始発駅の前から最終駅の後まで
+			const c_temp_pass = {"down_o": 0, "down_d": 0, "up_o": 0, "up_d": 0, "down_o_shift": 0, "down_d_shift": 0, "up_o_shift": 0, "up_d_shift": 0, "down_o_push": 0, "down_d_push": 0, "up_o_push": 0, "up_d_push": 0};
+			// 下り発駅別
+			if (i1 < i2) { // 発駅より後の駅間
+				for (let i3 = i2; i3 < c_od.length; i3++) { //　当該駅間より後の駅を合計
+					c_temp_pass["down_o"] += c_od[i1][i3];
+				}
+			}
+			// 上り発駅別
+			if (i2 <= i1) { // 発駅より前の駅間
+				for (let i3 = 0; i3 < i2; i3++) { //　当該駅間より前の駅を合計
+					c_temp_pass["up_o"] += c_od[i1][i3];
+				}
+			}
+			// 下り着駅別
+			if (i2 <= i1) { // 着駅より前の駅間
+				for (let i3 = 0; i3 < i2; i3++) { //　当該駅間より前の駅を合計
+					c_temp_pass["down_d"] += c_od[i3][i1];
+				}
+			}
+			// 上り着駅別
+			if (i1 < i2) { // 着駅より後の駅間
+				for (let i3 = i2; i3 < c_od.length; i3++) { //　当該駅間より後の駅を合計
+					c_temp_pass["up_d"] += c_od[i3][i1];
+				}
+			}
+			c_pass[i1].push(c_temp_pass);
+		}
+	}
+	
+	// 積み上げ表示用累計
+	for (let i1 = 0; i1 < c_od.length; i1++) { // 発着駅i1
+		for (let i2 = 0; i2 < c_od.length + 1; i2++) { // i2-1～i2駅間、始発駅の前から最終駅の後まで
+			for (let i3 = 0; i3 < c_od.length; i3++) { // 発着駅i3
+				// 下り
+				if (i1 <= i3) {
+					c_pass[i1][i2]["down_o_shift"] += c_pass[i3][i2]["down_o"];
+					c_pass[i1][i2]["down_d_shift"] += c_pass[i3][i2]["down_d"];
+				}
+				if (i3 <= i1) {
+					c_pass[i1][i2]["down_o_push"] += c_pass[i3][i2]["down_o"];
+					c_pass[i1][i2]["down_d_push"] += c_pass[i3][i2]["down_d"];
+				}
+				// 上り
+				if (i3 <= i1) {
+					c_pass[i1][i2]["up_o_shift"] += c_pass[i3][i2]["up_o"];
+					c_pass[i1][i2]["up_d_shift"] += c_pass[i3][i2]["up_d"];
+				}
+				if (i1 <= i3) {
+					c_pass[i1][i2]["up_o_push"] += c_pass[i3][i2]["up_o"];
+					c_pass[i1][i2]["up_d_push"] += c_pass[i3][i2]["up_d"];
+				}
+			}
+		}
+	}
+	
+	
+	const c_size = 16;
+	const c_x_left = 7 * c_size;
+	const c_x_right = 1 * c_size;
+	const c_y_top = 1 * c_size;
+	const c_y_bottom = 216;
+	const c_x_width = (c_od.length - 1) * c_size;
+	const c_y_height = 200;
+	
+	const c_svg_x_width = c_x_left + c_x_width + c_x_right;
+	const c_svg_y_height = 512;
+	
+	// 最大駅間通過人員
+	let l_max = 0;
+	let l_sum;
+	for (i1 = 0; i1 < c_od.length; i1++) {
+		// i1駅←i1+1駅間通過人員
+		l_sum = 0
+		for (i2 = 0; i2 <= i1; i2++) {
+			for (i3 = i1 + 1; i3 < c_od.length; i3++) {
+				l_sum += Number(c_od[i2][i3]);
+			}
+		}
+		l_max = Math.max(l_max, l_sum);
+		// i1駅→i1+1駅間通過人員
+		l_sum = 0
+		for (i2 = i1 + 1; i2 < c_od.length; i2++) {
+			for (i3 = 0; i3 <= i1 ; i3++) {
+				l_sum += Number(c_od[i2][i3]);
+			}
+		}
+		l_max = Math.max(l_max, l_sum);
+	}
+	
+	const c_max_heights = [100, 200, 500, 1000, 2000, 5000, 10000, 20000, 50000, 100000, 200000, 500000, 1000000, 2000000, 5000000];
+	for (let i1 = 0; i1 < c_max_heights.length; i1++) {
+		if (l_max < c_max_heights[i1]) {
+			l_max = c_max_heights[i1];
+			break;
+		}
+	}
+	
+	//上り下り別、発着別、積み上げ順別
+	const c_types = ["down_o_shift", "down_o_push", "down_d_shift", "down_d_push", "up_o_shift", "up_o_push", "up_d_shift", "up_d_push"];
+	document.getElementById("div1").innerHTML = "";
+	for (let i0 = 0; i0 < c_types.length; i0++) {
+		let l_svg = "";
+		if (c_types[i0].split("_")[0] === "down") {
+			l_svg += "<h2>向き：" + c_data[0][1] + "→" + c_data[0][c_data[0].length - 1] + "</h2>";
+		} else if (c_types[i0].split("_")[0] === "up") {
+			l_svg += "<h2>向き：" + c_data[0][1] + "←" + c_data[0][c_data[0].length - 1] + "</h2>";
+		}
+		
+		l_svg += "<svg xmlns=\"http://www.w3.org/2000/svg\" xmlns:xlink=\"http://www.w3.org/1999/xlink\" width=\"" + c_svg_x_width + "\" height=\"" + c_svg_y_height + "\" viewBox=\"0 0 " + c_svg_x_width + " " + c_svg_y_height + "\">";
+		
+		// 縦線
+		for (let i1 = 0; i1 < c_od.length; i1++) {
+			l_svg += "<path stroke=\"silver\" stroke-width=\"1\" fill=\"none\" d=\"M" + String(c_x_left + i1 * c_size) + "," + String(c_y_top) + " L" + String(c_x_left + i1 * c_size) + "," + String(c_y_bottom) + "\" />";
+			
+		}
+		
+		// 横軸
+		for (let i1 = 0; i1 < c_od.length; i1++) {
+			l_svg += "<text font-family=\"Source Han Sans JP\" font-size=\" + String(c_size) + \" writing-mode=\"tb\" x=\"" + String(c_x_left + i1 * c_size) + "\" y=\"" + String(c_y_bottom + c_size) + "\">" + String(c_data[i1 + 1][0]) + "</text>";
+			
+		}
+		
+		// 横線
+		for (let i1 = 0; i1 <= 10; i1++) {
+			l_svg += "<path stroke=\"silver\" stroke-width=\"1\" fill=\"none\" d=\"M" + String(c_x_left) + "," + String(c_y_top + c_y_height / 10 * i1) + " L" + String(c_x_left + c_x_width) + "," + String(c_y_top + c_y_height / 10 * i1) + "\" />";
+			
+		}
+		
+		// 縦軸
+		for (let i1 = 0; i1 <= 10; i1++) {
+			l_svg += "<text font-family=\"Source Han Sans JP\" font-size=\" + String(c_size) + \" text-anchor=\"end\" x=\"" + String(c_x_left - c_size) + "\" y=\"" + String(c_y_bottom - c_y_height / 10 * i1 + 4) + "\">" + String(l_max / 10 * i1) + "</text>";
+			
+		}
+		
+		
+		for (let i1 = 0; i1 < c_od.length; i1++) { // 発着駅i1
+			let l_path = "<path stroke=\"black\" stroke-width=\"1\" fill=\"none\" d=\"";
+			for (let i2 = 0; i2 < c_od.length + 1; i2++) { // i2-1～i2駅間、始発駅の前から最終駅の後まで
+				if (i2 === 0) {
+					l_path += "M";
+				} else {
+					l_path += " L";
+				}
+				l_path += String(c_x_left + (i2 - 0.5) * c_size) + "," + String(c_y_bottom - c_pass[i1][i2][c_types[i0]] / l_max * 200);
+			}
+			l_path += "\" />";
+			l_svg += l_path;
+		}
+		l_svg += "</svg>";
+		
+		document.getElementById("div1").innerHTML += l_svg;
+	}
+
+}
+
+
+
+
+
+function f_convert_csv_to_json_2(a_csv) {
+	//CSVを2次元配列にする
+	let l_1 = 0;
+	let l_2 = 0;
+	const c_array = [[]];
+	a_csv.replace(/\r?\n$/, "").replace(new RegExp(',|\r?\n|[^,"\r\n][^,\r\n]*|"(?:[^"]|"")*"', "g"), function(a1) {
+		if (a1 === ",") {
+			l_2 += 1;
+			c_array[l_1][l_2] = "";
+		} else if (a1 === "\n" || a1 === "\r\n") {
+			l_1 += 1;
+			c_array[l_1] = [];
+			l_2 = 0;
+		} else if (a1.charAt(0) !== "\"") {
+			c_array[l_1][l_2] = a1;
+		} else {
+			c_array[l_1][l_2] = a1.slice(1, -1).replace(/""/g, "\"");
+		}
+	});
+	for (let i1 = 1; i1 < c_array.length; i1++) {
+		for (let i2 = 0; i2 < c_array[i1].length; i2++) {
+			c_array[i1][i2] = c_array[i1][i2].replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&quot;").replace("'", "&apos;");
+		}
+	}
+	//この段階では全て文字列型になっている
+	return c_array;
+}
+
+
+			//]]>
+		</script>
+	</body>
+</html>
